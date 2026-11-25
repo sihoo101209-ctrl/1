@@ -19,7 +19,7 @@ Termux를 열고 이 저장소를 받습니다.
 
 ```bash
 pkg install -y git
-git clone https://github.com/sihoo101209-ctrl/1.git
+git clone -b ccr-37c6fec3-khry8l https://github.com/sihoo101209-ctrl/1.git
 cd 1
 ```
 
