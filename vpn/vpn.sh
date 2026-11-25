@@ -5,11 +5,13 @@
 #   bash vpn/vpn.sh countries        지금 쓸 수 있는 나라 목록
 #   bash vpn/vpn.sh get japan        일본 서버 중 가장 좋은 1개 → Download/vpn-JP-1.ovpn
 #   bash vpn/vpn.sh get us 3         미국 서버 상위 3개 (하나가 안 되면 다음 것 사용)
+#   bash vpn/vpn.sh import 파일      브라우저로 받은 서버 목록 파일 사용
 #
 # 받은 .ovpn 파일은 'OpenVPN for Android' 앱에서 가져오기 하면 됩니다.
 set -euo pipefail
 
-LIST_URL="${RVPN_LIST_URL:-https://www.vpngate.net/api/iphone/}"
+# 차례로 시도할 주소 (RVPN_LIST_URL 로 직접 지정 가능)
+read -ra LIST_URLS <<<"${RVPN_LIST_URL:-https://www.vpngate.net/api/iphone/ http://www.vpngate.net/api/iphone/ https://vpngate.net/api/iphone/ http://vpngate.net/api/iphone/}"
 CACHE="${RVPN_CACHE:-$HOME/.cache/region-vpn/servers.csv}"
 OUT_DIR="${RVPN_OUT_DIR:-$HOME/region-vpn}"
 DL_DIR="${RVPN_DL_DIR:-$HOME/storage/downloads}"
@@ -47,12 +49,40 @@ country_code() {
 # 서버 목록 받기 (10분간 캐시)
 fetch_list() {
   if [[ -f "$CACHE" && -n "$(find "$CACHE" -mmin -10 2>/dev/null)" ]]; then return; fi
+  # 브라우저로 받아 둔 목록이 다운로드 폴더에 있으면 그걸 사용
+  local f
+  for f in "$DL_DIR"/iphone* "$DL_DIR"/vpngate*.csv; do
+    [[ -f "$f" ]] && grep -q '^\*vpn_servers' "$f" 2>/dev/null && { cmd_import "$f"; return; }
+  done
   command -v curl >/dev/null || die "curl 이 없습니다. 먼저 'bash vpn/vpn.sh setup' 을 실행하세요."
   mkdir -p "$(dirname "$CACHE")"
-  say "무료 서버 목록 받는 중 ..."
-  curl -fsS -m 60 "$LIST_URL" | tr -d '\r' > "$CACHE.tmp" || die "서버 목록을 받지 못했습니다. 인터넷 연결을 확인하세요."
-  grep -q '^\*vpn_servers' "$CACHE.tmp" || die "서버 목록 형식이 이상합니다. 잠시 후 다시 시도하세요."
-  mv "$CACHE.tmp" "$CACHE"
+  local url
+  for url in "${LIST_URLS[@]}"; do
+    say "무료 서버 목록 받는 중 ... ($url)"
+    if curl -fsSL -4 --connect-timeout 15 -m 120 --retry 1 "$url" 2>/dev/null | tr -d '\r' > "$CACHE.tmp" \
+       && grep -q '^\*vpn_servers' "$CACHE.tmp"; then
+      mv "$CACHE.tmp" "$CACHE"; return
+    fi
+    warn "실패. 다음 주소로 다시 시도합니다."
+  done
+  rm -f -- "${CACHE:?}.tmp"
+  cat >&2 <<'MSG'
+
+서버 목록 사이트(vpngate.net)에 연결되지 않습니다. 지금 쓰는 네트워크가 막고 있을 수 있어요.
+  1) 와이파이 ↔ 모바일 데이터를 바꿔서 다시: bash vpn/vpn.sh get japan
+  2) 그래도 안 되면 폰 브라우저(크롬)로 아래 주소를 열어 '다운로드'로 저장한 뒤 다시 get 하세요:
+       https://www.vpngate.net/api/iphone/
+     (크롬: 주소 열기 → ⋮ → 다운로드 버튼. 다운로드 폴더에 저장되면 자동으로 찾아 씁니다)
+MSG
+  exit 1
+}
+
+cmd_import() {  # 브라우저로 받은 목록 파일 등록
+  local f=${1:-}; [[ -f "$f" ]] || die "파일을 찾을 수 없습니다: $f"
+  grep -q '^\*vpn_servers' "$f" || die "VPN Gate 서버 목록 파일이 아닙니다: $f"
+  mkdir -p "$(dirname "$CACHE")"
+  tr -d '\r' < "$f" > "$CACHE"
+  say "목록 파일 사용: $f"
 }
 
 # CSV 열: 1 HostName, 2 IP, 3 Score, 4 Ping, 5 Speed, 6 CountryLong, 7 CountryShort, ... 마지막 = OpenVPN 설정(base64)
@@ -115,6 +145,7 @@ cmd_get() {
 case "${1:-help}" in
   setup)     cmd_setup ;;
   countries) cmd_countries ;;
+  import)    cmd_import "${2:-}" ;;
   get)       cmd_get "${2:-}" "${3:-1}" ;;
-  *)         sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *)         sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac
