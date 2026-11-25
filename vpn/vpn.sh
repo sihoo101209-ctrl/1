@@ -112,7 +112,7 @@ cmd_get() {
   fetch_list
 
   local picked
-  picked=$(servers | awk -F, -v cc="$cc" '$7 == cc' | sort -t, -k3,3nr | head -n "$count")
+  picked=$(servers | awk -F, -v cc="$cc" '$7 == cc' | sort -t, -k3,3nr | awk -v n="$count" 'NR <= n')
   [[ -n "$picked" ]] || die "'$cc' 서버가 지금은 없습니다. 'bash vpn/vpn.sh countries' 로 가능한 나라를 확인하세요."
 
   mkdir -p "$OUT_DIR"
